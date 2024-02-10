@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Help
+# Help function
 Help()
 {
    # Display Help
@@ -13,64 +13,69 @@ Help()
    echo
 }
 
+# Function to run the build and push process
 Run()
 {
     echo "[BUILDnPUSH2IRIS] Starting the build and push process.."
-    SEARCH_DIR='./dist'
-    get_recent_file () {
-        FILE=$(ls -Art1 ${SEARCH_DIR} | tail -n 1)
-        if [ ! -f ${FILE} ]; then
-            SEARCH_DIR="${SEARCH_DIR}/${FILE}"
-            get_recent_file
-        fi
-        echo $FILE
-        exit
-    }
 
+    # Build the Python wheel package
     python3.9 setup.py bdist_wheel
 
-    latest=$(get_recent_file)
-    module=${latest#"./dist/"}
+    # Find the latest module file
+    latest=$(find ./dist -type f -name '*.whl' -printf "%T@ %p\n" | sort -n | tail -1 | cut -d' ' -f2)
+
+    # Check if the latest module file exists
+    if [ ! -f "$latest" ]; then
+        echo "[BUILDnPUSH2IRIS] No module file found in ./dist"
+        exit 1
+    fi
 
     echo "[BUILDnPUSH2IRIS] Found latest module file: $latest"
-    echo "[BUILDnPUSH2IRIS] Copy module file to worker container.."
-    docker cp $latest iriswebapp_worker:/iriswebapp/dependencies/$module
-    echo "[BUILDnPUSH2IRIS] Installing module in worker container.."
-    docker exec -it iriswebapp_worker /bin/sh -c "pip3 install dependencies/$module --force-reinstall"
-    echo "[BUILDnPUSH2IRIS] Restarting worker container.."
+
+    # Copy module file to worker container
+    docker cp "$latest" iriswebapp_worker:/iriswebapp/dependencies/
+
+    # Install module in worker container
+    docker exec -it iriswebapp_worker /bin/sh -c "pip3 install /iriswebapp/dependencies/$(basename $latest) --force-reinstall"
+
+    # Restart worker container
     docker restart iriswebapp_worker
 
-    if [ "$a_Flag" = true ] ; then
-        echo "[BUILDnPUSH2IRIS] Copy module file to app container.."
-        docker cp $latest iriswebapp_app:/iriswebapp/dependencies/$module
-        echo "[BUILDnPUSH2IRIS] Installing module in app container.."
-        docker exec -it iriswebapp_app /bin/sh -c "pip3 install dependencies/$module --force-reinstall"
-        echo "[BUILDnPUSH2IRIS] Restarting app container.."
+    if [ "$a_Flag" = true ]; then
+        # Copy module file to app container
+        docker cp "$latest" iriswebapp_app:/iriswebapp/dependencies/
+
+        # Install module in app container
+        docker exec -it iriswebapp_app /bin/sh -c "pip3 install /iriswebapp/dependencies/$(basename $latest) --force-reinstall"
+
+        # Restart app container
         docker restart iriswebapp_app
     fi
 
     echo "[BUILDnPUSH2IRIS] Completed!"
 }
 
+# Initialize flag
 a_Flag=false
 
+# Parse command-line options
 while getopts ":ha" option; do
    case $option in
-      h) # display Help
+      h) # Display Help
          Help
          exit;;
-      a) # Enter a name
+      a) # Install module to app container
          echo "[BUILDnPUSH2IRIS] Pushing to Worker and App container!"
          a_Flag=true
          Run
          exit;;
-     \?) # Invalid option
+      \?) # Invalid option
          echo "ERROR: Invalid option"
          exit;;
-
    esac
 done
 
+# If the '-a' flag is not provided, install the module only to the worker container
 echo "[BUILDnPUSH2IRIS] Pushing to Worker container only!"
 Run
 exit
